@@ -1,0 +1,76 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #f8fafc; /* Tailwind slate-50 */
+}
+
+@media print {
+  body {
+    background-color: white !important;
+    color: #0f172a !important;
+    font-size: 12px !important;
+    margin: 0 !important;
+    padding: 1.5cm !important;
+  }
+
+  /* Global element overrides */
+  nav, 
+  header, 
+  aside,
+  button, 
+  select, 
+  input, 
+  form,
+  .no-print {
+    display: none !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+  }
+
+  /* Clean up page container backgrounds and shadows for maximum readability */
+  .print-clean {
+    background: transparent !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+    border-radius: 8px !important;
+    padding: 1rem !important;
+    margin-bottom: 1.5rem !important;
+  }
+
+  .avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Force printable targets to expand full-width */
+  .print-full {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex-basis: 100% !important;
+    display: block !important;
+  }
+
+  /* Custom header shown only on print page */
+  .print-header-show {
+    display: flex !important;
+    align-items: center;
+    border-bottom: 2px solid #0f172a;
+    padding-bottom: 8px;
+    margin-bottom: 24px;
+  }
+}
+
+/* Default print utility helpers */
+.print-header-show {
+  display: none;
+}
+

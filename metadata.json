@@ -1,0 +1,6 @@
+{
+  "name": "Feedback Survey Form",
+  "description": "แบบฟอร์มขอรับข้อคิดเห็นต่อผลการสำรวจข้อมูลงานวิจัยสถาบัน ปีการศึกษา 2568 สำหรับสำนักมาตรฐานคุณภาพการศึกษา มหาวิทยาลัยกรุงเทพ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

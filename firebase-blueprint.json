@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "Question": {
+      "title": "Question",
+      "description": "Represents a feedback question section",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the question section"
+        },
+        "section": {
+          "type": "integer",
+          "description": "Section number of the research"
+        },
+        "title": {
+          "type": "string",
+          "description": "Research title"
+        },
+        "targetText": {
+          "type": "string",
+          "description": "Expected target return rate text"
+        },
+        "q1_text": {
+          "type": "string",
+          "description": "Text for question 1 (acknowledgement)"
+        },
+        "q2_text": {
+          "type": "string",
+          "description": "Text for question 2 (expectations)"
+        },
+        "q3_text": {
+          "type": "string",
+          "description": "Text for question 3 (suggestions)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "section", "title", "targetText", "q1_text", "q2_text", "q3_text", "createdAt", "updatedAt"]
+    },
+    "Response": {
+      "title": "Response",
+      "description": "Represents a completed feedback response from a respondent",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the response"
+        },
+        "respondentId": {
+          "type": "string",
+          "description": "Unique staff/employee identification code"
+        },
+        "respondentName": {
+          "type": "string",
+          "description": "Name of the respondent"
+        },
+        "respondentPosition": {
+          "type": "string",
+          "description": "Official position of the staff/faculty member"
+        },
+        "faculty": {
+          "type": "string",
+          "description": "Faculty of the respondent"
+        },
+        "respondentEmail": {
+          "type": "string",
+          "description": "Contact email of the staff/faculty member"
+        },
+        "respondentPhone": {
+          "type": "string",
+          "description": "Internal extension or telephone number of the staff/faculty member"
+        },
+        "answers": {
+          "type": "object",
+          "description": "A map of completed question answers"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Submission timestamp"
+        }
+      },
+      "required": ["id", "respondentName", "faculty", "answers", "timestamp"]
+    },
+    "AdminProfile": {
+      "title": "AdminProfile",
+      "description": "Represents a registered administrator profile",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Email identifier of the Administrator"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the Administrator"
+        },
+        "lastLogin": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last login"
+        }
+      },
+      "required": ["email", "name", "lastLogin"]
+    }
+  },
+  "firestore": {
+    "questions/{questionId}": {
+      "schema": "Question",
+      "description": "Collection of dynamic questionnaire sections"
+    },
+    "responses/{responseId}": {
+      "schema": "Response",
+      "description": "Collection of survey submissions"
+    },
+    "admins/{adminEmail}": {
+      "schema": "AdminProfile",
+      "description": "Collection of authorized system administrator profiles"
+    }
+  }
+}
