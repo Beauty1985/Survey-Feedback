@@ -83,13 +83,17 @@
           "type": "object",
           "description": "A map of completed question answers"
         },
+        "round": {
+          "type": "integer",
+          "description": "Survey round number (1, 2, or 3)"
+        },
         "timestamp": {
           "type": "string",
           "format": "date-time",
           "description": "Submission timestamp"
         }
       },
-      "required": ["id", "respondentName", "faculty", "answers", "timestamp"]
+      "required": ["id", "respondentName", "faculty", "answers", "round", "timestamp"]
     },
     "AdminProfile": {
       "title": "AdminProfile",

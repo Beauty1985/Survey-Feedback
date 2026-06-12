@@ -33,6 +33,7 @@ export interface SurveyResponse {
   respondentEmail?: string;
   respondentPhone?: string;
   answers: Answers;
+  round?: number;
   timestamp: any;
 }
 

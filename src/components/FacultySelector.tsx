@@ -25,13 +25,18 @@ interface FacultySelectorProps {
 }
 
 export default function FacultySelector({ selectedFaculty, onSelect, label }: FacultySelectorProps) {
+  const facultiesList = [...BU_FACULTIES];
+  if (selectedFaculty && !facultiesList.includes(selectedFaculty)) {
+    facultiesList.push(selectedFaculty);
+  }
+
   return (
     <div id="faculty-selector-container" className="space-y-4">
       <label className="block text-sm font-bold text-slate-800 mb-1 font-display">
         {label || "4. คณะวิชาหรือหน่วยงานที่สังกัด"} <span className="text-rose-500">*</span>
       </label>
       <div id="faculty-grid" className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {BU_FACULTIES.map((faculty, fIdx) => {
+        {facultiesList.map((faculty, fIdx) => {
           const isSelected = selectedFaculty === faculty;
           const labelId = `faculty-label-${fIdx}`;
           const radioId = `faculty-radio-${fIdx}`;

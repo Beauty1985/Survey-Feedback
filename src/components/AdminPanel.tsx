@@ -694,6 +694,15 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
             });
           }
         }
+        // Sort loadedAdmins: System Core (ผู้ดูแลระบบหลัก) first, followed by Dynamic Admin (ผู้ดูแลระบบทั่วไป)
+        loadedAdmins.sort((a, b) => {
+          const isCoreA = a.roleType === 'System Core';
+          const isCoreB = b.roleType === 'System Core';
+          if (isCoreA && !isCoreB) return -1;
+          if (!isCoreA && isCoreB) return 1;
+          return (a.name || a.email || '').localeCompare(b.name || b.email || '');
+        });
+
         setAdminsList(loadedAdmins);
       } catch (adminErr) {
         console.error("Failed to load admins:", adminErr);
@@ -842,6 +851,32 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
             clonedElement.style.margin = '0 auto';
             clonedElement.style.backgroundColor = '#f8fafc'; // clean light background
             clonedElement.style.borderRadius = '0px'; 
+
+            // Mathematically push Section 5 (Strategic recommendations) perfectly to Page 2 of the PDF
+            const targetSec = clonedDoc.getElementById('pdf-section-strategic-recommendations');
+            if (targetSec) {
+              const rectContainer = clonedElement.getBoundingClientRect();
+              const rectTarget = targetSec.getBoundingClientRect();
+              
+              // We calculate relative Y offset of Section 5 inside the printable container
+              const secTopRelative = rectTarget.top - rectContainer.top;
+              
+              // Exactly 267 mm contentHeight corresponds to (267 * 1200 / 186) = ~1722.58 px page height on a 1200px wide element
+              const clonedPageHeight = 267 * (1200 / 186);
+              
+              if (secTopRelative > 0 && secTopRelative < clonedPageHeight) {
+                const gapNeeded = clonedPageHeight - secTopRelative;
+                const spacer = clonedDoc.createElement('div');
+                spacer.style.height = `${gapNeeded}px`;
+                spacer.style.width = '100%';
+                spacer.style.clear = 'both';
+                
+                if (targetSec.parentNode) {
+                  targetSec.parentNode.insertBefore(spacer, targetSec);
+                }
+                console.log(`PDF Export: Pushed Section 5 to Page 2 by adding a ${gapNeeded}px spacer.`);
+              }
+            }
           }
 
           const clonedWindow = clonedDoc.defaultView;
@@ -1021,16 +1056,17 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
       const headers = [
         "ลำดับ (Index)",
         "วันที่ทำรายการ (Submission Date)",
+        "ครั้งที่ทำแบบสอบถาม (Round)",
         "รหัสบุคลากร (Staff ID)",
         "ชื่อ-นามสกุล (Full Name)",
         "ตำแหน่งบุคลากร (Position)",
         "หน่วยงานคณะวิชา (Faculty)",
         "อีเมลบุคลากร (Email)",
         "เบอร์โทรภายใน (Internal Tel)",
-        "งานวิจัย 1: สถานะตอบรับ (Part 1 Status)",
+        "งานวิจัย 1: Status (Part 1 Status)",
         "งานวิจัย 1: ความคาดหวัง (Part 1 Expectation)",
         "งานวิจัย 1: ข้อเสนอแนะ (Part 1 Comments)",
-        "งานวิจัย 2: สถานะตอบรับ (Part 2 Status)",
+        "งานวิจัย 2: Status (Part 2 Status)",
         "งานวิจัย 2: ความคาดหวัง (Part 2 Expectation)",
         "งานวิจัย 2: ข้อเสนอแนะ (Part 2 Comments)",
         "ระดับความพึงพอใจ: ด้านเนื้อหา (Content Rating)",
@@ -1044,6 +1080,8 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
         const formattedDate = res.timestamp?.seconds 
           ? new Date(res.timestamp.seconds * 1000).toLocaleString('th-TH')
           : "N/A";
+        
+        const roundText = res.round ? `ครั้งที่ ${res.round}` : "ครั้งที่ 1";
         
         const part1Q1Text = answers.part1_q1 === 'no_suggestions' 
           ? "รับทราบและไม่มีข้อเสนอแนะเพิ่มเติม"
@@ -1060,6 +1098,7 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
         return [
           index + 1,
           formattedDate,
+          roundText,
           res.respondentId || "-",
           res.respondentName || "N/A",
           res.respondentPosition || "-",
@@ -1997,71 +2036,6 @@ function sendFeedbackAlert(e) {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2.5 shrink-0 self-end lg:self-center font-sans">
-                      {/* Download TXT Summary */}
-                      <button
-                        onClick={() => {
-                          const savedPlans = localStorage.getItem('bu_survey_improvement_plans');
-                          let plansList: any[] = [];
-                          if (savedPlans) {
-                            try {
-                              plansList = JSON.parse(savedPlans);
-                            } catch (e) {
-                              console.error("Failed to parse plans", e);
-                            }
-                          }
-
-                          const docContent = `======================================================================
-รายงานสรุปผลการประเมินและการขับเคลื่อนปรับปรุงหลักสูตร (BU-QA Academic Framework)
-======================================================================
-ออกรายงานเมื่อ: ${new Date().toLocaleDateString('th-TH')} - ${new Date().toLocaleTimeString('th-TH')} น.
-ผู้ดูแลวิเคราะห์รายงาน: walailuk.p@bu.ac.th (ผู้บริหารสูงสุดฝ่ายสถิติตรวจสอบคุณภาพ)
-
-1. สรุปคะแนนภาพรวมความพึงพอใจด้านงานวิจัยหลักสูตร (เต็ม 5.00 คะแนน)
-----------------------------------------------------------------------
-- ภาพรวมความพึงพอใจเฉลี่ยทุกมิติ: ${overallAvg > 0 ? overallAvg.toFixed(2) : "3.67"}/5.00
-- มิติด้านเนื้อหาหลักสูตร (Content Quality): ${contentAvg > 0 ? contentAvg.toFixed(2) : "3.67"}/5.00
-- มิติด้านสื่อนวัตกรรมและการสื่อสาร (Outreach & Comm): ${communicationAvg > 0 ? communicationAvg.toFixed(2) : "3.80"}/5.00
-- มิติด้านการนำไปใช้ประโยชน์ในวิชาชีพ (Career & Coop): ${utilizationAvg > 0 ? utilizationAvg.toFixed(2) : "3.55"}/5.00
-
-2. สรุปความถี่ผู้ตอบแบบสำรวจสถาบัน
-----------------------------------------------------------------------
-- จำนวนคำตอบของระบบทั้งหมด: ${responses.length} ชุด
-
-จำแนกสะสมตามคณะวิชา:
-${displayedFacultyStats.map((f, i) => `${i+1}. คณะ${f.name}: ทำแบบสำรวจ ${f.count} ชุด (คิดเป็นร้อยละ ${f.percentage.toFixed(1)}%) | คะแนนเฉลี่ย: ${f.average > 0 ? f.average.toFixed(2) : '3.33'}`).join('\n')}
-
-3. รายการแผนกลยุทธ์ขับเคลื่อนการพัฒนาและปรับปรุงระบบ (Action Plans Matrix)
-----------------------------------------------------------------------
-${plansList.length === 0 ? "ไม่มีในระบบ" : plansList.map((p, i) => {
-  return `${i+1}. [${p.status === 'completed' ? 'เสร็จสิ้น' : p.status === 'in_progress' ? 'กำลังทำ' : 'รอดำเนินการ'}] (ความสำคัญ: ${p.priority === 'high' ? 'ด่วนที่สุด' : p.priority === 'medium' ? 'สำคัญ' : 'ทั่วไป'}) - ${p.text} [หมวด: ${p.category === 'content' ? 'นวัตกรรมเนื้อหา' : p.category === 'communication' ? 'การสื่อสาร' : p.category === 'utilization' ? 'สหกิจนำใช้ประโยชน์' : 'ทั่วไป'}] (สร้างเมื่อ: ${p.createdAt})`;
-}).join('\n')}
-
-4. ข้อคิดเห็นเชิงคุณภาพจากบัณฑิตและผู้รับบัณฑิต (Qualitative Voices)
-----------------------------------------------------------------------
-[สว.1] ความคิดเห็นเชิงคุณภาพ:
-${p1SuggestionsList.length === 0 ? "ไม่มีการเสนอแนะ" : p1SuggestionsList.map((p, i) => `   - คุณ${p.name} (คณะ${p.faculty}): ข้อเสนอแนะ: "${p.suggestion}" | ความคิดเห็น: "${p.opinion}"`).join('\n')}
-
-[สว.2] ข้อสะท้อนผู้บังคับบัญชา / นายจ้าง:
-${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะท้อนความเห็น" : p2SuggestionsList.map((p, i) => `   - คุณ${p.name} (คณะ${p.faculty}): ข้อสะท้อน: "${p.suggestion}" | ความเห็นเพิ่มเติม: "${p.opinion}"`).join('\n')}
-
-======================================================================
-สิ้นสุดรายงานอ้างอิงของสถาบัน | มหาวิทยาลัยกรุงเทพ (BU-QA)
-======================================================================`;
-
-                          const blob = new Blob([docContent], { type: 'text/plain;charset=utf-8' });
-                          const url = URL.createObjectURL(blob);
-                          const link = document.createElement('a');
-                          link.href = url;
-                          link.download = `BU_Feedback_Executive_Report_${new Date().toISOString().split('T')[0]}.txt`;
-                          link.click();
-                          URL.revokeObjectURL(url);
-                        }}
-                        className="px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs inline-flex items-center space-x-2 transition cursor-pointer hover:shadow-2xs"
-                        title="ดาวน์โหลดโครงร่างข้อมูลความพึงพอใจและแผนงานขับเคลื่อนในรูปแบบข้อความดิบ"
-                      >
-                        <Download className="w-4 h-4 text-slate-500" />
-                        <span>ดาวน์โหลดรายงานย่อ (.TXT)</span>
-                      </button>
 
                       {/* Print PDF Button */}
                       <button
@@ -2171,11 +2145,11 @@ ${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะ�
                   </div>
                 </div>
 
-                {/* 2. THREE DIMENSION ANALYTICS GAUGE & KEYWORD ENGINE */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* 2. THREE DIMENSION ANALYTICS GAUGE */}
+                <div className="w-full">
                   
                   {/* Satisfaction Dimension breakdowns */}
-                  <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-150 p-5 space-y-4">
+                  <div className="bg-white rounded-2xl border border-slate-150 p-5 space-y-4">
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                       <h4 className="text-xs font-black text-slate-800 flex items-center space-x-1">
                         <Activity className="w-4 h-4 text-indigo-650" />
@@ -2197,47 +2171,6 @@ ${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะ�
                       </p>
                       <p>• ตัวชี้วัดสถิติเป้าหมายถูกกำหนดไว้ที่<strong>ไม่ต่ำกว่า 3.51 คะแนน</strong> (จัดอยู่ในระดับพึงพอใจดีมากขึ้นไป)</p>
                       <p>• ดัชนีทุกตัวถูกคำนวณแบบสมน้ำสมเนื้อจากหัวข้อประเมินจริง เพื่อความเที่ยงตรงด้านการประเมินสากลชีวภาพ</p>
-                    </div>
-                  </div>
-
-                  {/* Hot Word Engine highlight */}
-                  <div className="bg-white rounded-2xl border border-slate-150 p-5 space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                      <h4 className="text-xs font-black text-slate-800 flex items-center space-x-1.5">
-                        <Sparkles className="w-4 h-4 text-indigo-600" />
-                        <span>ดัชนีคีย์เวิร์ดสำรวจเชิงลึก (Hot Insights)</span>
-                      </h4>
-                      <span className="text-[9px] bg-slate-100 text-slate-500 font-bold px-1.5 py-0.5 rounded">Smart Keywords</span>
-                    </div>
-
-                    <p className="text-[10px] text-slate-400 leading-normal">
-                      กลุ่มประเด็นข้อคิดเห็นเชิงคุณภาพที่ตรวจพบบ่อยที่สุดในบทตอบกลับสรุปภาพรวมวิจัย:
-                    </p>
-
-                    {textKeywords.length === 0 ? (
-                      <div className="py-12 text-center text-slate-350 text-[10px] font-semibold leading-relaxed">
-                        <Info className="w-5 h-5 mx-auto text-slate-300 mb-1" />
-                        ปริมาณคำป้อนเข้าไม่หนาแน่นพอ<br/>ในการแสดงผลคีย์เวิร์ดวิจัย
-                      </div>
-                    ) : (
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        {textKeywords.map((kw, i) => (
-                          <div 
-                            key={i} 
-                            className="flex items-center space-x-1.5 rounded-xl px-2.5 py-2 border border-slate-200/50 bg-slate-50 hover:bg-slate-100 transition shadow-2xs"
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
-                            <span className="text-xs font-extrabold text-slate-800">{kw.label}</span>
-                            <span className="bg-slate-200/80 text-[10px] text-slate-600 font-bold px-1.5 py-0.5 rounded-md font-mono">
-                              {kw.count} ครั้ง
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="text-[10px] text-slate-400 bg-slate-50/50 p-3 rounded-xl leading-relaxed">
-                      💡 <strong>ข้อเสนอแนะแอดมิน:</strong> ความถี่ของคีย์เวิร์ดที่เกี่ยวเนื่องจะสัมพันธ์กับความสมใจทักษะที่ประเมินโดยตรง
                     </div>
                   </div>
 
@@ -2400,7 +2333,7 @@ ${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะ�
                 </div>
 
                 {/* 5. RECOMMENDATIONS FOR IMPROVEMENT & STRATEGIC ACTION PLANS */}
-                <div className="bg-gradient-to-r from-slate-50 to-indigo-50/10 rounded-3xl border border-slate-200/85 p-6 space-y-6">
+                <div id="pdf-section-strategic-recommendations" className="bg-gradient-to-r from-slate-50 to-indigo-50/10 rounded-3xl border border-slate-200/85 p-6 space-y-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200/80 pb-4 gap-4">
                     <div className="space-y-1">
                       <div className="flex items-center space-x-2">
@@ -2423,7 +2356,7 @@ ${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะ�
                   </div>
 
                   {/* Recommendations and Plans Matrix */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="w-full">
 
                     {/* Left: Intelligent Action Suggestions based on current stats */}
                     <div className="bg-white rounded-2xl border border-slate-150 p-5 space-y-4 shadow-sm">
@@ -2527,27 +2460,6 @@ ${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะ�
                       </div>
                     </div>
 
-                    {/* Right: Interactive Action plan tracker */}
-                    <div className="bg-white rounded-2xl border border-slate-150 p-5 space-y-4 shadow-sm font-sans text-xs">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b pb-2 border-slate-100 gap-2">
-                        <div className="flex items-center space-x-1.5">
-                          <ListTodo className="w-4 h-4 text-indigo-650 animate-bounce" />
-                          <h5 className="text-xs font-black text-slate-800">
-                            กระดานรายการแผนงานเพื่อการขับเคลื่อนปรับปรุงพัฒนาหลักสูตร
-                          </h5>
-                        </div>
-                        <span className="text-[9.5px] text-amber-600 font-extrabold bg-amber-50 px-2 py-0.5 rounded transition">
-                          Interactive Task Management
-                        </span>
-                      </div>
-
-                      <p className="text-[10px] text-slate-400 leading-normal">
-                        ผู้ปฏิบัติการสามารถกรอง ยืนยัน เพิ่มแผนพัฒนา และเปลี่ยนสถานะโดยคลิกที่ปุ่มวงกลมหน้ารายการ (รอดำเนินการ ➜ กำลังทำ ➜ เสร็จสิ้น) ข้อมูลจะบันทึกอัตโนมัติ:
-                      </p>
-
-                      <ActionTracker widgetResponses={responses} />
-                    </div>
-
                   </div>
                 </div>
 
@@ -2618,6 +2530,7 @@ ${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะ�
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                     <tr>
                       <th className="px-5 py-3.5">วันที่</th>
+                      <th className="px-5 py-3.5">ครั้งที่</th>
                       <th className="px-5 py-3.5">ชื่อ-นามสกุล</th>
                       <th className="px-5 py-3.5">คณะวิชา</th>
                       <th className="px-5 py-3.5 text-center">สว.1 (งานทำ)</th>
@@ -2629,7 +2542,7 @@ ${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะ�
                   <tbody className="divide-y divide-slate-100 text-slate-700">
                     {filteredResponses.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="text-center py-10 text-slate-400 font-medium">
+                        <td colSpan={8} className="text-center py-10 text-slate-400 font-medium">
                           ไม่มีบันทึกข้อมูลผลตอบรับที่ตรงกับการค้นหา ณ ขณะนี้
                         </td>
                       </tr>
@@ -2647,6 +2560,11 @@ ${p2SuggestionsList.length === 0 ? "ไม่มีการระบุสะ�
                                 ? new Date(res.timestamp.seconds * 1000).toLocaleDateString('th-TH')
                                 : "N/A"
                               }
+                            </td>
+                            <td className="px-5 py-3.5 whitespace-nowrap text-xs">
+                              <span className="font-black bg-slate-100 border border-slate-200 text-slate-700 px-2.5 py-1 rounded">
+                                ครั้งที่ {res.round || 1}
+                              </span>
                             </td>
                             <td className="px-5 py-3.5 font-semibold text-slate-900 leading-normal">{res.respondentName}</td>
                             <td className="px-5 py-3.5 font-medium text-slate-600">{res.faculty}</td>

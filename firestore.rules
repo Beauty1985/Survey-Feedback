@@ -51,7 +51,8 @@ service cloud.firestore {
     // --- Entity: Response ---
     match /responses/{responseId} {
       allow create: if isBUUser() && isValidId(responseId);
-      allow read, delete: if isAdmin();
+      allow read: if isAdmin() || (isBUUser() && (resource.data.respondentEmail == request.auth.token.email || resource.data.respondentEmail.lower() == request.auth.token.email.lower()));
+      allow delete: if isAdmin();
     }
 
     // --- Entity: AdminProfile ---

@@ -12,9 +12,9 @@ import {
   LogOut,
   Sparkles
 } from 'lucide-react';
-import { collection, doc, setDoc, serverTimestamp, getDocs, orderBy, query } from 'firebase/firestore';
+import { collection, doc, getDoc, setDoc, serverTimestamp, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import FacultySelector from './FacultySelector';
+import FacultySelector, { BU_FACULTIES } from './FacultySelector';
 import RatingInput from './RatingInput';
 import { Answers, SurveyResponse, Question } from '../types';
 
@@ -59,6 +59,11 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
   const [respondentEmail, setRespondentEmail] = useState<string>(userEmail || '');
   const [respondentPhone, setRespondentPhone] = useState<string>('');
   
+  // Custom Survey Round states
+  const [selectedRound, setSelectedRound] = useState<number | null>(null);
+  const [completedRounds, setCompletedRounds] = useState<number[]>([]);
+  const [isVerifying, setIsVerifying] = useState<boolean>(false);
+  
   // Answers state
   const [answers, setAnswers] = useState<Answers>({
     part1_q1: '',
@@ -77,6 +82,32 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [isProfileSynced, setIsProfileSynced] = useState<boolean>(false);
+
+  // Fetch permitted user (instructor) profile if available
+  useEffect(() => {
+    async function fetchUserProfile() {
+      if (!userEmail) return;
+      try {
+        const emailLower = userEmail.toLowerCase().trim();
+        const profileRef = doc(db, 'instructors', emailLower);
+        const snapshot = await getDoc(profileRef);
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data.staffId) setRespondentId(data.staffId);
+          if (data.name) setRespondentName(data.name);
+          if (data.position && data.position !== '-') setRespondentPosition(data.position);
+          if (data.faculty && data.faculty !== 'หน่วยงานทั่วไป') setSelectedFaculty(data.faculty);
+          if (data.email) setRespondentEmail(data.email);
+          if (data.internalPhone && data.internalPhone !== '-') setRespondentPhone(data.internalPhone);
+          setIsProfileSynced(true);
+        }
+      } catch (err) {
+        console.warn("Could not load instructor profile from database list:", err);
+      }
+    }
+    fetchUserProfile();
+  }, [userEmail]);
 
   // Fetch dynamic questions if they exist in firestore
   useEffect(() => {
@@ -105,47 +136,14 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
     
     // Step index mappings:
     // 0: Introduction
-    // 1: Part 1
-    // 2: Part 2
-    // 3: Part 3 (satisfaction)
-    // 4: Part 4 (general info)
-    // 5: Submission / Review
+    // 1: Respondent Profile Info (previously step 4)
+    // 2: Select Survey Round (ครั้งที่ 1, ครั้งที่ 2, ครั้งที่ 3)
+    // 3: Part 1 (previously step 1)
+    // 4: Part 2 (previously step 2)
+    // 5: Part 3 (satisfaction) (previously step 3)
+    // 6: Submission / Review
     
     if (currentStep === 1) {
-      if (!answers.part1_q1) {
-        setValidationError('กรุณาเลือกประเด็นการจัดส่งข้อมูลก่อนไปขั้นตอนถัดไป');
-        return false;
-      }
-      if (answers.part1_q1 === 'has_suggestions') {
-        if (!answers.part1_q2?.trim()) {
-          setValidationError('กรุณากรอกความคาดหวังในการนำข้อมูลไปใช้ประโยชน์');
-          return false;
-        }
-      }
-    }
-
-    if (currentStep === 2) {
-      if (!answers.part2_q1) {
-        setValidationError('กรุณาเลือกประเด็นการจัดส่งข้อมูลก่อนไปขั้นตอนถัดไป');
-        return false;
-      }
-      if (answers.part2_q1 === 'has_suggestions') {
-        if (!answers.part2_q2?.trim()) {
-          setValidationError('กรุณากรอกความคาดหวังในการนำข้อมูลไปใช้ประโยชน์');
-          return false;
-        }
-      }
-    }
-
-    if (currentStep === 3) {
-      const { content, communication, utilization } = answers.part3_satisfaction;
-      if (content === 0 || communication === 0 || utilization === 0) {
-        setValidationError('กรุณาประเมินระดับความพึงพอใจให้ครบทุกหัวข้อ');
-        return false;
-      }
-    }
-
-    if (currentStep === 4) {
       if (!respondentId.trim()) {
         setValidationError('กรุณากรอกรหัสบุคลากร');
         return false;
@@ -172,10 +170,110 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
       }
     }
 
+    if (currentStep === 2) {
+      if (selectedRound === null) {
+        setValidationError('กรุณาเลือกครั้งที่ทำแบบสอบถามก่อนไปขั้นตอนถัดไป');
+        return false;
+      }
+      // Condition 1: Must take Round 1 before Round 2
+      if (selectedRound === 2 && !completedRounds.includes(1)) {
+        setValidationError('ท่านต้องดำเนินการทำแบบสอบถามครั้งที่ 1 ให้เสร็จสิ้นก่อนจึงจะสามารถเลือกทำครั้งที่ 2 ได้');
+        return false;
+      }
+      // Condition 2: Must take Round 2 before Round 3
+      if (selectedRound === 3 && !completedRounds.includes(2)) {
+        setValidationError('ท่านต้องดำเนินการทำแบบสอบถามครั้งที่ 2 ให้เสร็จสิ้นก่อนจึงจะสามารถเลือกทำครั้งที่ 3 ได้');
+        return false;
+      }
+      // Prevent taking a round that's already completed
+      if (completedRounds.includes(selectedRound)) {
+        setValidationError(`ท่านได้บันทึกข้อมูลแบบสอบถามสำหรับ ครั้งที่ ${selectedRound} เรียบร้อยแล้ว ไม่สามารถเลือกทำซ้ำได้`);
+        return false;
+      }
+    }
+
+    if (currentStep === 3) {
+      if (!answers.part1_q1) {
+        setValidationError('กรุณาเลือกประเด็นการจัดส่งข้อมูลก่อนไปขั้นตอนถัดไป');
+        return false;
+      }
+      if (answers.part1_q1 === 'has_suggestions') {
+        if (!answers.part1_q2?.trim()) {
+          setValidationError('กรุณากรอกความคาดหวังในการนำข้อมูลไปใช้ประโยชน์');
+          return false;
+        }
+      }
+    }
+
+    if (currentStep === 4) {
+      if (!answers.part2_q1) {
+        setValidationError('กรุณาเลือกประเด็นการจัดส่งข้อมูลก่อนไปขั้นตอนถัดไป');
+        return false;
+      }
+      if (answers.part2_q1 === 'has_suggestions') {
+        if (!answers.part2_q2?.trim()) {
+          setValidationError('กรุณากรอกความคาดหวังในการนำข้อมูลไปใช้ประโยชน์');
+          return false;
+        }
+      }
+    }
+
+    if (currentStep === 5) {
+      const { content, communication, utilization } = answers.part3_satisfaction;
+      if (content === 0 || communication === 0 || utilization === 0) {
+        setValidationError('กรุณาประเมินระดับความพึงพอใจให้ครบทุกหัวข้อ');
+        return false;
+      }
+    }
+
     return true;
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
+    if (currentStep === 1) {
+      if (!validateStep()) return;
+      setIsVerifying(true);
+      setValidationError(null);
+      try {
+        const responsesRef = collection(db, 'responses');
+        const q = query(responsesRef, where('respondentId', '==', respondentId.trim()));
+        const querySnapshot = await getDocs(q);
+        const completed: number[] = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.round) {
+            completed.push(Number(data.round));
+          } else {
+            completed.push(1);
+          }
+        });
+        setCompletedRounds(completed);
+
+        // Auto-select first available round
+        if (!completed.includes(1)) {
+          setSelectedRound(1);
+        } else if (!completed.includes(2)) {
+          setSelectedRound(2);
+        } else if (!completed.includes(3)) {
+          setSelectedRound(3);
+        } else {
+          setSelectedRound(null);
+        }
+
+        setCurrentStep(2);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (err: any) {
+        try {
+          handleFirestoreError(err, OperationType.LIST, 'responses');
+        } catch (adaptedError: any) {
+          setValidationError(`เกิดข้อผิดพลาดในการตรวจสอบประวัติการทำแบบสอบถาม: ${adaptedError.message}`);
+        }
+      } finally {
+        setIsVerifying(false);
+      }
+      return;
+    }
+
     if (validateStep()) {
       setCurrentStep(prev => prev + 1);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -203,6 +301,7 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
       respondentEmail: respondentEmail.trim(),
       respondentPhone: respondentPhone.trim(),
       answers,
+      round: selectedRound || 1,
       timestamp: serverTimestamp()
     };
 
@@ -224,7 +323,7 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
   const part1 = questions.find(q => q.section === 1) || DEFAULT_QUESTIONS[0];
   const part2 = questions.find(q => q.section === 2) || DEFAULT_QUESTIONS[1];
 
-  const stepsCount = 6;
+  const stepsCount = 7;
   const progressPercent = (currentStep / (stepsCount - 1)) * 100;
 
   return (
@@ -314,8 +413,295 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
                 </div>
               )}
 
-              {/* PAGE 2: Part 1 */}
+              {/* PAGE 2: General Information */}
               {currentStep === 1 && (
+                <div id="step-part-4" className="space-y-6">
+                  <div className="border-b border-slate-100 pb-4">
+                    <span className="text-[10px] bg-slate-900 border border-slate-900 text-white font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider font-display">
+                      ข้อมูลทั่วไปผู้ตอบ
+                    </span>
+                    <h3 className="text-xl font-extrabold text-slate-900 mt-2 font-display">
+                      ข้อมูลทั่วไปของผู้ตอบ
+                    </h3>
+                  </div>
+
+                  <div className="space-y-5 pt-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-bold text-slate-800 font-display">
+                          1. รหัสบุคลากร
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="รหัสบุคลากร (ดึงจากฐานข้อมูลสิทธิ์)"
+                          value={respondentId}
+                          disabled
+                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm outline-none text-slate-500 font-medium bg-slate-50/85 cursor-not-allowed select-none"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-sm font-bold text-slate-800 font-display">
+                          2. ชื่อ - นามสกุล
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="ชื่อ-นามสกุล (ดึงจากฐานข้อมูลสิทธิ์)"
+                          value={respondentName}
+                          disabled
+                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm outline-none text-slate-500 font-medium bg-slate-50/85 cursor-not-allowed select-none"
+                        />
+                      </div>
+
+                      <div className="space-y-2 col-span-1 md:col-span-2">
+                        <label className="block text-sm font-bold text-slate-800 font-display">
+                          3. ตำแหน่งบุคลากร
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="ตำแหน่งบุคลากร (ดึงจากฐานข้อมูลสิทธิ์)"
+                          value={respondentPosition}
+                          disabled
+                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm outline-none text-slate-500 font-medium bg-slate-50/85 cursor-not-allowed select-none"
+                        />
+                      </div>
+
+                      <div className="space-y-2 col-span-1 md:col-span-2">
+                        <label className="block text-sm font-bold text-slate-800 font-display">
+                          4. คณะวิชาหรือหน่วยงานที่สังกัด
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="คณะวิชาหรือหน่วยงานที่สังกัด (ดึงจากฐานข้อมูลสิทธิ์)"
+                          value={selectedFaculty}
+                          disabled
+                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm outline-none text-slate-500 font-medium bg-slate-50/85 cursor-not-allowed select-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-bold text-slate-800 font-display">
+                          5. อีเมลบุคลากร
+                        </label>
+                        <input
+                          type="email"
+                          placeholder="อีเมลบุคลากร (ดึงจากฐานข้อมูลสิทธิ์)"
+                          value={respondentEmail}
+                          disabled
+                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm outline-none text-slate-500 font-medium bg-slate-50/85 cursor-not-allowed select-none"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-sm font-bold text-slate-800 font-display">
+                          6. เบอร์โทรภายใน
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="เบอร์โทรภายใน (ดึงจากฐานข้อมูลสิทธิ์)"
+                          value={respondentPhone}
+                          disabled
+                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm outline-none text-slate-500 font-medium bg-slate-50/85 cursor-not-allowed select-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* PAGE 3: Select Survey Round */}
+              {currentStep === 2 && (
+                <div id="step-select-round" className="space-y-6">
+                  <div className="border-b border-slate-100 pb-4">
+                    <span className="text-[10px] bg-slate-900 border border-slate-900 text-white font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider font-display">
+                      ความถี่การประเมิน
+                    </span>
+                    <h3 className="text-xl font-extrabold text-slate-900 mt-2 font-display">
+                      เลือกครั้งที่ประเมินแบบสอบถาม
+                    </h3>
+                  </div>
+
+                  <div className="space-y-4 pt-2">
+                    <p className="text-sm font-medium text-slate-600 leading-normal">
+                      ระบบตรวจพบประวัติการทำแบบสอบถามของท่านโดยรหัสบุคลากร <strong className="text-slate-900 font-bold">{respondentId}</strong> กรุณาเลือกครั้งที่ต้องการตอบตามเงื่อนไขลำดับขั้นตอนด้านล่าง:
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                      {/* Round 1 */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!completedRounds.includes(1)) {
+                            setSelectedRound(1);
+                            setValidationError(null);
+                          }
+                        }}
+                        className={`text-left p-5 border rounded-2xl transition duration-200 shadow-sm relative flex flex-col justify-between h-44 cursor-pointer group ${
+                          completedRounds.includes(1)
+                            ? 'bg-slate-50 border-slate-200 opacity-75 cursor-not-allowed select-none'
+                            : selectedRound === 1
+                              ? 'bg-slate-900 text-white border-slate-900 ring-2 ring-slate-900 ring-offset-2'
+                              : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-slate-350'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full font-display border ${
+                              completedRounds.includes(1)
+                                ? 'bg-emerald-100 border-emerald-100 text-emerald-800'
+                                : selectedRound === 1
+                                  ? 'bg-slate-800 border-slate-700 text-white'
+                                  : 'bg-slate-100 border-slate-100 text-slate-700'
+                            }`}>
+                              {completedRounds.includes(1) ? 'เสร็จสิ้น' : 'เปิดให้ตอบ'}
+                            </span>
+                          </div>
+                          <h4 className="text-base font-black mt-3 font-display">ครั้งที่ 1</h4>
+                          <p className={`text-xs font-medium mt-1 leading-normal ${
+                            selectedRound === 1 ? 'text-slate-300' : 'text-slate-500'
+                          }`}>
+                            การสำรวจข้อมูลวิจัยรอบที่ 1 ถัดไปสำหรับคณะและสาขาวิชา
+                          </p>
+                        </div>
+                        <div className="text-[11px] font-bold font-display mt-2">
+                          {completedRounds.includes(1) ? (
+                            <span className="text-emerald-600 font-extrabold flex items-center space-x-1">
+                              <span>✓ ตอบสิทธิ์เรียบร้อย</span>
+                            </span>
+                          ) : selectedRound === 1 ? (
+                            <span className="text-white bg-slate-850 px-2.5 py-0.5 rounded-full">เลือกครั้งนี้</span>
+                          ) : (
+                            <span className="text-slate-400">คลิกเพื่อเลือก</span>
+                          )}
+                        </div>
+                      </button>
+
+                      {/* Round 2 */}
+                      {(() => {
+                        const isLocked = !completedRounds.includes(1);
+                        const isCompleted = completedRounds.includes(2);
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!isLocked && !isCompleted) {
+                                setSelectedRound(2);
+                                setValidationError(null);
+                              }
+                            }}
+                            className={`text-left p-5 border rounded-2xl transition duration-200 shadow-sm relative flex flex-col justify-between h-44 cursor-pointer group ${
+                              isCompleted
+                                ? 'bg-slate-50 border-slate-200 opacity-75 cursor-not-allowed select-none'
+                                : isLocked
+                                  ? 'bg-slate-50/70 border-slate-200/60 opacity-60 cursor-not-allowed select-none'
+                                  : selectedRound === 2
+                                    ? 'bg-slate-900 text-white border-slate-900 ring-2 ring-slate-900 ring-offset-2'
+                                    : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-slate-350'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full font-display border ${
+                                  isCompleted
+                                    ? 'bg-emerald-100 border-emerald-100 text-emerald-800'
+                                    : isLocked
+                                      ? 'bg-slate-100 border-slate-100 text-slate-400'
+                                      : selectedRound === 2
+                                        ? 'bg-slate-800 border-slate-700 text-white'
+                                        : 'bg-slate-100 border-slate-100 text-slate-700'
+                                }`}>
+                                  {isCompleted ? 'เสร็จสิ้น' : isLocked ? 'ปิดล็อก' : 'เปิดให้ตอบ'}
+                                </span>
+                              </div>
+                              <h4 className="text-base font-black mt-3 font-display">ครั้งที่ 2</h4>
+                              <p className={`text-xs font-medium mt-1 leading-normal ${
+                                selectedRound === 2 ? 'text-slate-300' : 'text-slate-500'
+                              }`}>
+                                การสำรวจข้อมูลประเมินและทบทวนรอบที่ 2 สถาบัน
+                              </p>
+                            </div>
+                            <div className="text-[11px] font-bold font-display mt-2">
+                              {isCompleted ? (
+                                <span className="text-emerald-600 font-extrabold">✓ ตอบสิทธิ์เรียบร้อย</span>
+                              ) : isLocked ? (
+                                <span className="text-slate-400 font-medium">🔒 กรุณาทำครั้งที่ 1 ก่อน</span>
+                              ) : selectedRound === 2 ? (
+                                <span className="text-white bg-slate-850 px-2.5 py-0.5 rounded-full">เลือกครั้งนี้</span>
+                              ) : (
+                                <span className="text-slate-400">คลิกเพื่อเลือก</span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })()}
+
+                      {/* Round 3 */}
+                      {(() => {
+                        const isLocked = !completedRounds.includes(2);
+                        const isCompleted = completedRounds.includes(3);
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!isLocked && !isCompleted) {
+                                setSelectedRound(3);
+                                setValidationError(null);
+                              }
+                            }}
+                            className={`text-left p-5 border rounded-2xl transition duration-200 shadow-sm relative flex flex-col justify-between h-44 cursor-pointer group ${
+                              isCompleted
+                                ? 'bg-slate-50 border-slate-200 opacity-75 cursor-not-allowed select-none'
+                                : isLocked
+                                  ? 'bg-slate-50/70 border-slate-200/60 opacity-60 cursor-not-allowed select-none'
+                                  : selectedRound === 3
+                                    ? 'bg-slate-900 text-white border-slate-900 ring-2 ring-slate-900 ring-offset-2'
+                                    : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-slate-350'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full font-display border ${
+                                  isCompleted
+                                    ? 'bg-emerald-100 border-emerald-100 text-emerald-800'
+                                    : isLocked
+                                      ? 'bg-slate-100 border-slate-100 text-slate-400'
+                                      : selectedRound === 3
+                                        ? 'bg-slate-800 border-slate-700 text-white'
+                                        : 'bg-slate-100 border-slate-100 text-slate-700'
+                                }`}>
+                                  {isCompleted ? 'เสร็จสิ้น' : isLocked ? 'ปิดล็อก' : 'เปิดให้ตอบ'}
+                                </span>
+                              </div>
+                              <h4 className="text-base font-black mt-3 font-display">ครั้งที่ 3</h4>
+                              <p className={`text-xs font-medium mt-1 leading-normal ${
+                                selectedRound === 3 ? 'text-slate-300' : 'text-slate-500'
+                              }`}>
+                                สรุปประเด็นงานวิจัยสถาบันหลังเสร็จสิ้นรอบที่ 3
+                              </p>
+                            </div>
+                            <div className="text-[11px] font-bold font-display mt-2">
+                              {isCompleted ? (
+                                <span className="text-emerald-600 font-extrabold">✓ ตอบสิทธิ์เรียบร้อย</span>
+                              ) : isLocked ? (
+                                <span className="text-slate-400 font-medium">🔒 กรุณาทำครั้งที่ 2 ก่อน</span>
+                              ) : selectedRound === 3 ? (
+                                <span className="text-white bg-slate-850 px-2.5 py-0.5 rounded-full">เลือกครั้งนี้</span>
+                              ) : (
+                                <span className="text-slate-400">คลิกเพื่อเลือก</span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* PAGE 4: Part 1 */}
+              {currentStep === 3 && (
                 <div id="step-part-1" className="space-y-6">
                   <div className="border-b border-slate-100 pb-4">
                     <span className="text-[10px] bg-slate-900 border border-slate-900 text-white font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider font-display">
@@ -408,8 +794,8 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
                 </div>
               )}
 
-              {/* PAGE 3: Part 2 */}
-              {currentStep === 2 && (
+              {/* PAGE 5: Part 2 */}
+              {currentStep === 4 && (
                 <div id="step-part-2" className="space-y-6">
                   <div className="border-b border-slate-100 pb-4">
                     <span className="text-[10px] bg-slate-900 border border-slate-900 text-white font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider font-display">
@@ -502,8 +888,8 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
                 </div>
               )}
 
-              {/* PAGE 4: Satisfaction Rating */}
-              {currentStep === 3 && (
+              {/* PAGE 6: Satisfaction Rating */}
+              {currentStep === 5 && (
                 <div id="step-part-3" className="space-y-6">
                   <div className="border-b border-slate-100 pb-4">
                     <span className="text-[10px] bg-slate-900 border border-slate-900 text-white font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider font-display">
@@ -548,99 +934,8 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
                 </div>
               )}
 
-              {/* PAGE 5: General Information */}
-              {currentStep === 4 && (
-                <div id="step-part-4" className="space-y-6">
-                  <div className="border-b border-slate-100 pb-4">
-                    <span className="text-[10px] bg-slate-900 border border-slate-900 text-white font-bold px-3.5 py-1.5 rounded-full uppercase tracking-wider font-display">
-                      ส่วนที่ 4
-                    </span>
-                    <h3 className="text-xl font-extrabold text-slate-900 mt-2 font-display">
-                      ข้อมูลทั่วไปของผู้ตอบ
-                    </h3>
-                  </div>
-
-                  <div className="space-y-5 pt-2">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-slate-800 font-display">
-                          1. รหัสบุคลากร <span className="text-rose-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="กรุณากรอกรหัสบุคลากร"
-                          value={respondentId}
-                          onChange={(e) => setRespondentId(e.target.value)}
-                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 text-slate-800 font-medium bg-white"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-slate-800 font-display">
-                          2. ชื่อ - นามสกุล <span className="text-rose-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="กรุณากรอกชื่อและนามสกุลของท่าน"
-                          value={respondentName}
-                          onChange={(e) => setRespondentName(e.target.value)}
-                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 text-slate-800 font-medium bg-white"
-                        />
-                      </div>
-
-                      <div className="space-y-2 col-span-1 md:col-span-2">
-                        <label className="block text-sm font-bold text-slate-800 font-display">
-                          3. ตำแหน่งบุคลากร <span className="text-rose-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="กรุณากรอกตำแหน่งบุคลากร (เช่น อาจารย์ประจำ, หัวหน้าภาควิชา, คณบดี)"
-                          value={respondentPosition}
-                          onChange={(e) => setRespondentPosition(e.target.value)}
-                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 text-slate-800 font-medium bg-white"
-                        />
-                      </div>
-                    </div>
-
-                    <FacultySelector
-                      selectedFaculty={selectedFaculty}
-                      onSelect={(fac) => setSelectedFaculty(fac)}
-                      label="4. คณะวิชาหรือหน่วยงานที่สังกัด"
-                    />
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-slate-800 font-display">
-                          5. อีเมลบุคลากร <span className="text-rose-500">*</span>
-                        </label>
-                        <input
-                          type="email"
-                          placeholder="กรุณากรอกอีเมลของท่าน"
-                          value={respondentEmail}
-                          onChange={(e) => setRespondentEmail(e.target.value)}
-                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 text-slate-800 font-medium bg-white"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-slate-800 font-display">
-                          6. เบอร์โทรภายใน <span className="text-rose-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="กรุณากรอกเบอร์โทรภายใน (เช่น 1234)"
-                          value={respondentPhone}
-                          onChange={(e) => setRespondentPhone(e.target.value)}
-                          className="w-full border border-slate-200 rounded-xl p-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 text-slate-800 font-medium bg-white"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* PAGE 6: Review & Finalize Submission */}
-              {currentStep === 5 && (
+              {/* PAGE 7: Review & Finalize Submission */}
+              {currentStep === 6 && (
                 <div id="step-summary" className="space-y-6">
                   <div className="border-b border-slate-100 pb-4 text-center">
                     <span className="text-[10px] bg-slate-900 border border-slate-900 text-white font-bold px-4 py-1.5 rounded-full inline-block uppercase tracking-wider font-display">
@@ -652,34 +947,12 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
                   </div>
 
                   <div className="divide-y divide-slate-150 space-y-4 max-h-[360px] overflow-y-auto pr-2 font-display">
-                    <div className="pb-4 text-sm bg-slate-50/50 p-4 rounded-xl border border-slate-150 space-y-2">
-                      <span className="text-slate-400 font-bold block uppercase tracking-wide text-[10px]">รายละเอียดข้อมูลผู้ตอบแบบสำรวจ:</span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                        <div>
-                          <p className="text-[10px] text-slate-400 font-bold">1. รหัสบุคลากร:</p>
-                          <p className="font-extrabold text-slate-900 text-sm">{respondentId || "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-400 font-bold">2. ชื่อ - นามสกุล:</p>
-                          <p className="font-extrabold text-slate-900 text-sm">{respondentName}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-400 font-bold">3. ตำแหน่งบุคลากร:</p>
-                          <p className="font-bold text-slate-800 text-sm">{respondentPosition || "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-400 font-bold">4. คณะวิชาหรือหน่วยงานที่สังกัด:</p>
-                          <p className="font-bold text-slate-800 text-sm">{selectedFaculty}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-400 font-bold font-mono">5. อีเมลบุคลากร:</p>
-                          <p className="font-bold text-slate-800 text-sm font-mono">{respondentEmail || "-"}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-400 font-bold font-mono">6. เบอร์โทรภายใน:</p>
-                          <p className="font-bold text-slate-800 text-sm font-mono">{respondentPhone || "-"}</p>
-                        </div>
-                      </div>
+                    {/* Survey Round info in summary */}
+                    <div className="py-3 text-sm">
+                      <span className="text-slate-400 font-bold block uppercase tracking-wide text-[10px] font-display">ครั้งที่ประเมินแบบสอบถาม:</span>
+                      <p className="font-extrabold text-slate-900 mt-1">
+                        - ครั้งที่ {selectedRound}
+                      </p>
                     </div>
 
                     <div className="py-3 text-sm">
@@ -750,11 +1023,24 @@ export default function SurveyForm({ userEmail, userName, onLogout }: SurveyForm
                     <button
                       id="next-btn"
                       type="button"
+                      disabled={isVerifying}
                       onClick={handleNext}
-                      className="flex items-center space-x-1 text-sm text-white bg-slate-900 hover:bg-slate-800 font-bold px-6 py-3 rounded-lg transition-all cursor-pointer shadow-md font-display"
+                      className="flex items-center space-x-1.5 text-sm text-white bg-slate-900 hover:bg-slate-800 disabled:bg-slate-500 font-bold px-6 py-3 rounded-lg transition-all cursor-pointer shadow-md font-display"
                     >
-                      <span>ถัดไป</span>
-                      <ChevronRight className="w-4 h-4" />
+                      {isVerifying ? (
+                        <>
+                          <svg className="animate-spin h-4 w-4 text-white mr-1" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          <span>ตรวจสอบข้อมูล...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>ถัดไป</span>
+                          <ChevronRight className="w-4 h-4" />
+                        </>
+                      )}
                     </button>
                   ) : (
                     <button
